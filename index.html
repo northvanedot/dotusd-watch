@@ -1,0 +1,295 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>dotUSD watch</title>
+<style>
+  :root {
+    color-scheme: light;
+    --page: #f6f5f1; --surface-1: #fcfcfb; --line: #e2e0d8; --grid: #ebe9e2;
+    --text-primary: #0b0b0b; --text-secondary: #52514e; --text-muted: #86857f;
+    --series-1: #2a78d6; --series-2: #eb6834;
+    --good: #1a7f4b; --warn: #a15c00; --idle: #6b6a65;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --page: #121211; --surface-1: #1a1a19; --line: #2e2d2a; --grid: #262523;
+      --text-primary: #ffffff; --text-secondary: #c3c2b7; --text-muted: #8d8c85;
+      --series-1: #3987e5; --series-2: #d95926;
+      --good: #4cc38a; --warn: #e2a13a; --idle: #9a998f;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--page); color: var(--text-primary);
+    font: 15px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 980px; margin: 0 auto; padding: 28px 20px 64px; }
+  header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px 16px; margin-bottom: 6px; }
+  h1 { font-size: 26px; letter-spacing: -0.02em; margin: 0; font-weight: 650; }
+  h2 { font-size: 15px; margin: 0 0 10px; font-weight: 650; letter-spacing: -0.01em; }
+  .pill { font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 999px;
+    border: 1px solid currentColor; display: inline-flex; align-items: center; gap: 6px; }
+  .pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+  .pill.wait { color: var(--warn); } .pill.live { color: var(--good); } .pill.idle { color: var(--idle); }
+  .sub { color: var(--text-secondary); margin: 0 0 22px; max-width: 70ch; }
+  .meta { font-size: 12.5px; color: var(--text-muted); margin-left: auto; font-variant-numeric: tabular-nums; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(168px, 1fr)); gap: 12px; margin-bottom: 14px; }
+  .card { background: var(--surface-1); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+  .tile .k { font-size: 12.5px; color: var(--text-secondary); }
+  .tile .v { font-size: 23px; font-weight: 650; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; margin-top: 2px; }
+  .tile .n { font-size: 12.5px; color: var(--text-muted); margin-top: 2px; min-height: 1.4em; }
+  .meter { height: 6px; background: var(--grid); border-radius: 4px; margin-top: 8px; overflow: hidden; }
+  .meter > i { display: block; height: 100%; background: var(--series-1); border-radius: 4px; width: 0%; }
+  .chartcard { padding: 16px 16px 10px; margin-bottom: 14px; }
+  .chartwrap { position: relative; }
+  svg { width: 100%; height: auto; display: block; overflow: visible; }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 12.5px; color: var(--text-secondary); margin: 0 0 6px; }
+  .legend span::before { content: ""; display: inline-block; width: 14px; height: 2px; vertical-align: middle; margin-right: 6px; background: var(--c); }
+  .tip { position: absolute; pointer-events: none; background: var(--surface-1); border: 1px solid var(--line);
+    border-radius: 8px; padding: 7px 10px; font-size: 12.5px; box-shadow: 0 4px 14px rgba(0,0,0,.10);
+    font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .tip b { font-weight: 650; } .tip .sw { display: inline-block; width: 9px; height: 2px; vertical-align: middle; margin-right: 6px; }
+  details { margin-top: 8px; font-size: 13px; } summary { cursor: pointer; color: var(--text-secondary); }
+  .tablewrap { overflow-x: auto; margin-top: 8px; }
+  table { border-collapse: collapse; width: 100%; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+  th, td { text-align: right; padding: 4px 10px; border-bottom: 1px solid var(--grid); white-space: nowrap; }
+  th:first-child, td:first-child { text-align: left; } th { color: var(--text-secondary); font-weight: 600; }
+  ol.steps { margin: 0; padding-left: 20px; color: var(--text-secondary); } ol.steps li { margin: 3px 0; } ol.steps b { color: var(--text-primary); font-weight: 600; }
+  .note { font-size: 12.5px; color: var(--text-muted); margin: 10px 0 0; }
+  .banner { border: 1px dashed var(--warn); color: var(--warn); border-radius: 10px; padding: 8px 12px; font-size: 13px; margin-bottom: 14px; }
+  footer { margin-top: 26px; font-size: 12.5px; color: var(--text-muted); }
+  code { font: 12.5px ui-monospace, SFMono-Regular, Menlo, monospace; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>dotUSD watch</h1>
+    <span id="state" class="pill idle">connecting</span>
+    <span class="meta" id="meta"></span>
+  </header>
+  <p class="sub" id="sub">Read-only view of the dotUSD stablecoin on Asset Hub Polkadot: supply against its ceiling, the DOT pool's price, and how that price compares with the existing DOT/USDT pool. Every number is read from the chain in your browser.</p>
+
+  <div id="demoBanner" class="banner" hidden>Simulation. dotUSD does not exist yet, so this view replays a model of the pool's first blocks built from the amounts in referendum 1944 and the live DOT/USDT price. It is not recorded data.</div>
+
+  <section class="grid" aria-label="Current state">
+    <div class="card tile"><div class="k">Supply</div><div class="v" id="supply">–</div>
+      <div class="meter" aria-hidden="true"><i id="supplyBar"></i></div><div class="n" id="supplyNote">of a 10,000,000 ceiling</div></div>
+    <div class="card tile"><div class="k">DOT price in the dotUSD pool</div><div class="v" id="price">–</div><div class="n" id="priceNote"></div></div>
+    <div class="card tile"><div class="k">DOT price in the USDT pool (reference)</div><div class="v" id="ref">–</div><div class="n" id="refNote">same chain, same block</div></div>
+    <div class="card tile"><div class="k">Pool reserves</div><div class="v" id="res">–</div><div class="n" id="resNote"></div></div>
+  </section>
+
+  <section class="card chartcard">
+    <h2 id="chartTitle">DOT price per block: dotUSD pool against the USDT pool</h2>
+    <div class="legend" id="legend">
+      <span style="--c: var(--series-1)">dotUSD pool</span>
+      <span style="--c: var(--series-2)">USDT pool (reference)</span>
+    </div>
+    <div class="chartwrap" id="chartwrap">
+      <svg id="chart" viewBox="0 0 920 300" role="img" aria-label="DOT price per block in the dotUSD pool and the USDT pool"></svg>
+      <div class="tip" id="tip" hidden></div>
+    </div>
+    <details><summary>Show the data as a table</summary><div class="tablewrap"><table id="tbl"></table></div></details>
+  </section>
+
+  <section class="card" id="before">
+    <h2>Before it exists: what referendum 1944 does on enactment</h2>
+    <ol class="steps">
+      <li><b>Creates the asset</b> on Asset Hub: id 7873, six decimals, sufficient.</li>
+      <li><b>Creates the PSM</b>: USDT in, dotUSD out at 1:1, ceiling 10,000,000, minting fee 0, redemption fee 0.01%.</li>
+      <li><b>Registers dotUSD on the People chain</b>, so it can be held there.</li>
+      <li><b>Seeds a DOT/dotUSD pool from the treasury</b>: mints 2,500,000.02 dotUSD from USDT and pairs 2,500,000 of it with 2,853,229.86 DOT.</li>
+      <li><b>Creates a bearer-coin instance</b> for dotUSD on the People chain.</li>
+    </ol>
+    <p class="note" id="refState">Referendum state: reading…</p>
+  </section>
+
+  <footer>
+    Source of every figure: Asset Hub Polkadot over public RPC (<span id="ep">–</span>). Decoded from the referendum's preimage where stated. Nothing here signs or sends a transaction.
+  </footer>
+</main>
+
+<script>
+(() => {
+  const ENDPOINTS = [
+    'https://polkadot-asset-hub-rpc.polkadot.io',
+    'https://asset-hub-polkadot-rpc.n.dwellir.com',
+    'https://rpc-asset-hub-polkadot.luckyfriday.io',
+  ];
+  // Storage keys and call arguments, precomputed from the chain metadata.
+  const K = {
+    asset7873: '0x682a59d51ab9e48a8c8cc418ff9708d2d34371a193a751eea5883e9553457b2e974267ef3a34a5b57b06f26556087d7dc11e0000',
+    ref1944: '0x0f6738a0ee80c8e74cd2c7417c1e25569613e9bbc07e304aa9a1af9b85898e5a75300f82161f4d33bea459719b458be498070000',
+    now: '0xf0c365c3cf59d671eb72da0e7a4113c49f1f0515f462cdcf84e0f1d6045dfcbb',
+    reservesDotUsd: '0x0100' + '00020432050' + '57b',   // (DOT, Assets/7873)
+    reservesUsdt:   '0x0100' + '0002043205011f',       // (DOT, Assets/1984)
+  };
+  const CEILING = 10_000_000, DOT_DEC = 1e10, USD_DEC = 1e6;
+  const CALL = { dot: 2853229.86, usd: 2500000 };       // amounts fixed in the referendum's call
+  const params = new URLSearchParams(location.search);
+  const DEMO = params.has('demo');
+  const $ = (id) => document.getElementById(id);
+  const fmt = (n, d = 2) => n == null ? '–' : n.toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
+
+  let ep = 0, reqId = 0;
+  async function rpc(method, p = []) {
+    for (let i = 0; i < ENDPOINTS.length; i++) {
+      const url = ENDPOINTS[(ep + i) % ENDPOINTS.length];
+      try {
+        const r = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ id: ++reqId, jsonrpc: '2.0', method, params: p }) });
+        const j = await r.json();
+        if (j.error) throw Object.assign(new Error(j.error.message), { node: true });
+        ep = (ep + i) % ENDPOINTS.length; $('ep').textContent = new URL(url).host;
+        return j.result;
+      } catch (e) { if (e.node) throw e; }           // a node-level error is real; only transport errors fail over
+    }
+    throw new Error('no endpoint reachable');
+  }
+  const bytes = (hex) => { const h = hex.slice(2); const b = new Uint8Array(h.length / 2); for (let i = 0; i < b.length; i++) b[i] = parseInt(h.substr(i * 2, 2), 16); return b; };
+  const u128 = (b, o) => { let v = 0n; for (let i = 15; i >= 0; i--) v = (v << 8n) | BigInt(b[o + i]); return v; };
+  const reserves = (hex) => { if (!hex || hex === '0x00') return null; const b = bytes(hex); return [Number(u128(b, 1)) / DOT_DEC, Number(u128(b, 17)) / USD_DEC]; };
+
+  const series = [];   // {block, time, price, ref, supply, dot, usd}
+  let lastBlock = 0;
+
+  async function tick() {
+    try {
+      const head = await rpc('chain_getFinalizedHead');
+      const hdr = await rpc('chain_getHeader', [head]);
+      const n = parseInt(hdr.number, 16);
+      if (n === lastBlock) return;
+      lastBlock = n;
+      const [det, rUsd, rRef, ref, now] = await Promise.all([
+        rpc('state_getStorage', [K.asset7873, head]),
+        rpc('state_call', ['AssetConversionApi_get_reserves', K.reservesDotUsd, head]),
+        rpc('state_call', ['AssetConversionApi_get_reserves', K.reservesUsdt, head]),
+        rpc('state_getStorage', [K.ref1944, head]),
+        rpc('state_getStorage', [K.now, head]),
+      ]);
+      const pool = reserves(rUsd), refPool = reserves(rRef);
+      const supply = det ? Number(u128(bytes(det), 128)) / USD_DEC : null;
+      const t = now ? new Date(Number(BigInt('0x' + [...bytes(now)].reverse().map(x => x.toString(16).padStart(2, '0')).join('')))) : null;
+      const row = { block: n, time: t, supply, dot: pool?.[0] ?? null, usd: pool?.[1] ?? null,
+        price: pool ? pool[1] / pool[0] : null, ref: refPool ? refPool[1] / refPool[0] : null };
+      if (!DEMO) { series.push(row); if (series.length > 600) series.shift(); render(row, ref); }
+      else renderMeta(row, ref);
+      return row;
+    } catch (e) {
+      $('state').className = 'pill idle'; $('state').textContent = 'endpoint unreachable';
+    }
+  }
+
+  function renderMeta(row, ref) {
+    $('meta').textContent = `block ${row.block.toLocaleString('en-US')}` + (row.time ? ` · ${row.time.toISOString().slice(11, 19)} UTC` : '');
+    const variant = ref ? parseInt(ref.slice(2, 4), 16) : null;
+    const names = ['still being voted on', 'approved', 'rejected', 'cancelled', 'timed out', 'killed'];
+    $('refState').textContent = 'Referendum 1944 state, read from chain: ' + (variant == null ? 'not found' : names[variant] ?? 'unknown') + '.';
+  }
+
+  function render(row, ref) {
+    renderMeta(row, ref);
+    const exists = row.supply != null;
+    $('state').className = 'pill ' + (exists ? 'live' : 'wait');
+    $('state').textContent = exists ? 'live' : 'waiting for enactment';
+    $('before').hidden = exists && row.price != null;
+    tiles(row);
+    draw();
+  }
+
+  function tiles(row) {
+    $('supply').textContent = row.supply == null ? 'not created' : fmt(row.supply, 0);
+    $('supplyBar').style.width = row.supply == null ? '0%' : Math.min(100, row.supply / CEILING * 100).toFixed(2) + '%';
+    $('supplyNote').textContent = row.supply == null ? 'ceiling will be 10,000,000' : `${(row.supply / CEILING * 100).toFixed(1)}% of the 10,000,000 ceiling`;
+    $('price').textContent = row.price == null ? '–' : '$' + fmt(row.price, 4);
+    $('ref').textContent = row.ref == null ? '–' : '$' + fmt(row.ref, 4);
+    if (row.price != null && row.ref != null) {
+      const gap = (row.price / row.ref - 1) * 100;
+      $('priceNote').textContent = Math.abs(gap) < 0.05 ? 'in line with the USDT pool' : `${gap > 0 ? '+' : '−'}${Math.abs(gap).toFixed(2)}% against the USDT pool`;
+    } else $('priceNote').textContent = row.price == null ? 'pool not created' : '';
+    $('res').textContent = row.dot == null ? '–' : fmt(row.dot, 0) + ' DOT';
+    $('resNote').textContent = row.usd == null ? '' : fmt(row.usd, 0) + ' dotUSD';
+  }
+
+  // ---- chart -------------------------------------------------------------
+  const W = 920, H = 300, M = { l: 52, r: 96, t: 12, b: 30 };
+  const svg = $('chart'), tip = $('tip');
+  const el = (name, attrs, text) => { const e = document.createElementNS('http://www.w3.org/2000/svg', name); for (const k in attrs) e.setAttribute(k, attrs[k]); if (text != null) e.textContent = text; return e; };
+  let scale = null;
+
+  function draw() {
+    svg.replaceChildren();
+    const pts = series.filter(d => d.ref != null || d.price != null);
+    if (pts.length < 2) { svg.append(el('text', { x: W / 2, y: H / 2, 'text-anchor': 'middle', fill: 'var(--text-muted)', 'font-size': 13 }, 'Collecting blocks…')); table(); return; }
+    const vals = pts.flatMap(d => [d.price, d.ref]).filter(v => v != null);
+    let lo = Math.min(...vals), hi = Math.max(...vals); const pad = Math.max((hi - lo) * 0.15, hi * 0.002); lo -= pad; hi += pad;
+    const x = (i) => M.l + (pts.length === 1 ? 0 : i / (pts.length - 1)) * (W - M.l - M.r);
+    const y = (v) => M.t + (1 - (v - lo) / (hi - lo)) * (H - M.t - M.b);
+    scale = { pts, x, y };
+    for (let i = 0; i <= 4; i++) {
+      const v = lo + (hi - lo) * i / 4, yy = y(v);
+      svg.append(el('line', { x1: M.l, x2: W - M.r, y1: yy, y2: yy, stroke: 'var(--grid)', 'stroke-width': 1 }));
+      svg.append(el('text', { x: M.l - 8, y: yy + 4, 'text-anchor': 'end', fill: 'var(--text-muted)', 'font-size': 11.5 }, '$' + v.toFixed(3)));
+    }
+    const first = pts[0], last = pts[pts.length - 1];
+    svg.append(el('text', { x: M.l, y: H - 8, fill: 'var(--text-muted)', 'font-size': 11.5 }, 'block ' + first.block.toLocaleString('en-US')));
+    svg.append(el('text', { x: W - M.r, y: H - 8, 'text-anchor': 'end', fill: 'var(--text-muted)', 'font-size': 11.5 }, 'block ' + last.block.toLocaleString('en-US')));
+    const line = (key, color, label) => {
+      const seg = pts.map((d, i) => d[key] == null ? null : [x(i), y(d[key])]).filter(Boolean);
+      if (seg.length < 2) return;
+      svg.append(el('path', { d: 'M' + seg.map(p => p[0].toFixed(1) + ',' + p[1].toFixed(1)).join('L'), fill: 'none', stroke: color, 'stroke-width': 2, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }));
+      const e = seg[seg.length - 1];
+      svg.append(el('circle', { cx: e[0], cy: e[1], r: 4, fill: color, stroke: 'var(--surface-1)', 'stroke-width': 2 }));
+      return { y: e[1], label };
+    };
+    const ends = [line('ref', 'var(--series-2)', 'USDT pool'), line('price', 'var(--series-1)', 'dotUSD pool')].filter(Boolean);
+    if (ends.length === 2 && Math.abs(ends[0].y - ends[1].y) < 14) { const mid = (ends[0].y + ends[1].y) / 2, up = ends[0].y < ends[1].y; ends[0].y = mid + (up ? -8 : 8); ends[1].y = mid + (up ? 8 : -8); }
+    for (const e of ends) svg.append(el('text', { x: W - M.r + 10, y: e.y + 4, fill: 'var(--text-secondary)', 'font-size': 12 }, e.label));
+    svg.append(el('line', { id: 'cross', x1: 0, x2: 0, y1: M.t, y2: H - M.b, stroke: 'var(--text-muted)', 'stroke-width': 1, 'stroke-dasharray': '3 3', visibility: 'hidden' }));
+    table();
+  }
+
+  function table() {
+    const rows = series.slice(-60).reverse();
+    $('tbl').innerHTML = '<tr><th>Block</th><th>dotUSD pool</th><th>USDT pool</th><th>Supply</th><th>Pool DOT</th><th>Pool dotUSD</th></tr>' +
+      rows.map(d => `<tr><td>${d.block.toLocaleString('en-US')}</td><td>${d.price == null ? '–' : '$' + d.price.toFixed(4)}</td><td>${d.ref == null ? '–' : '$' + d.ref.toFixed(4)}</td><td>${d.supply == null ? '–' : fmt(d.supply, 0)}</td><td>${d.dot == null ? '–' : fmt(d.dot, 0)}</td><td>${d.usd == null ? '–' : fmt(d.usd, 0)}</td></tr>`).join('');
+  }
+
+  $('chartwrap').addEventListener('pointermove', (ev) => {
+    if (!scale) return;
+    const r = svg.getBoundingClientRect(); const px = (ev.clientX - r.left) / r.width * W;
+    const { pts, x } = scale; let i = Math.round((px - M.l) / (W - M.l - M.r) * (pts.length - 1)); i = Math.max(0, Math.min(pts.length - 1, i));
+    const d = pts[i], cross = document.getElementById('cross'); if (!cross) return;
+    cross.setAttribute('x1', x(i)); cross.setAttribute('x2', x(i)); cross.setAttribute('visibility', 'visible');
+    tip.hidden = false;
+    tip.innerHTML = `<b>Block ${d.block.toLocaleString('en-US')}</b><br>` +
+      `<span class="sw" style="background:var(--series-1)"></span>dotUSD pool ${d.price == null ? '–' : '$' + d.price.toFixed(4)}<br>` +
+      `<span class="sw" style="background:var(--series-2)"></span>USDT pool ${d.ref == null ? '–' : '$' + d.ref.toFixed(4)}`;
+    const left = (x(i) / W) * r.width; tip.style.left = Math.min(r.width - tip.offsetWidth - 4, Math.max(4, left + 12)) + 'px'; tip.style.top = '8px';
+  });
+  $('chartwrap').addEventListener('pointerleave', () => { tip.hidden = true; const c = document.getElementById('cross'); if (c) c.setAttribute('visibility', 'hidden'); });
+
+  // ---- simulation (only with ?demo) -------------------------------------
+  async function demo() {
+    $('demoBanner').hidden = false; $('state').className = 'pill idle'; $('state').textContent = 'simulation';
+    $('chartTitle').textContent = 'Simulated opening: the pool starts at the price fixed in the call and is traded to market';
+    const live = await tick(); const market = live?.ref ?? 1.2; const base = live?.block ?? 0;
+    let x = CALL.dot, y = CALL.usd, supply = CALL.usd; const k = () => x * y;
+    for (let b = -6; b < 0; b++) series.push({ block: base + b, supply: null, dot: null, usd: null, price: null, ref: market });
+    const steps = 22;
+    for (let s = 0; s <= steps; s++) {
+      series.push({ block: base + s, supply, dot: x, usd: y, price: y / x, ref: market });
+      const target = Math.sqrt(k() * market), want = target - y;            // dotUSD needed to reach market
+      const dy = want * (s < 3 ? 0.45 : 0.3); if (dy < 1) continue;        // traders close a share of the gap each block
+      const out = x * (dy * 0.997) / (y + dy * 0.997); y += dy; x -= out; supply += dy;
+    }
+    const last = series[series.length - 1]; tiles(last); $('before').hidden = false; draw();
+  }
+
+  if (DEMO) demo(); else { tick(); setInterval(tick, 6000); }
+})();
+</script>
+</body>
+</html>
