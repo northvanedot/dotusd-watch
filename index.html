@@ -79,6 +79,21 @@
     <div class="card tile"><div class="k">DOT price in the dotUSD pool</div><div class="v" id="price">–</div><div class="n" id="priceNote"></div></div>
     <div class="card tile"><div class="k">DOT price in the USDT pool (reference)</div><div class="v" id="ref">–</div><div class="n" id="refNote">same chain, same block</div></div>
     <div class="card tile"><div class="k">Pool reserves</div><div class="v" id="res">–</div><div class="n" id="resNote"></div></div>
+    <div class="card tile"><div class="k">Backing: USDT held by the PSM</div><div class="v" id="back">–</div><div class="n" id="backNote">against dotUSD it has minted</div></div>
+  </section>
+
+  <section class="card chartcard" id="openingCard" hidden>
+    <h2>The opening, as recorded from the chain</h2>
+    <div class="legend">
+      <span style="--c: var(--series-1)">dotUSD pool</span>
+      <span style="--c: var(--series-2)">USDT pool (reference)</span>
+    </div>
+    <div class="chartwrap" id="openWrap">
+      <svg id="openChart" viewBox="0 0 920 300" role="img" aria-label="Recorded DOT price per block in the dotUSD pool and the USDT pool from the first block the pool existed"></svg>
+      <div class="tip" id="openTip" hidden></div>
+    </div>
+    <p class="note" id="openNote"></p>
+    <details><summary>Show the data as a table</summary><div class="tablewrap"><table id="openTbl"></table></div></details>
   </section>
 
   <section class="card chartcard">
@@ -125,6 +140,11 @@
     now: '0xf0c365c3cf59d671eb72da0e7a4113c49f1f0515f462cdcf84e0f1d6045dfcbb',
     reservesDotUsd: '0x0100' + '00020432050' + '57b',   // (DOT, Assets/7873)
     reservesUsdt:   '0x0100' + '0002043205011f',       // (DOT, Assets/1984)
+    // PSM for dotUSD: its info, its debt against USDT, and the USDT held by its reserve account.
+    // The reserve account is blake2_256("modl" ++ "py/pegsm" ++ encoded asset location), per the pallet source.
+    psmInfo: '0xa4e223159cdb2f877fe6909e78f91a59a4e223159cdb2f877fe6909e78f91a59b8de20b4d5c3fd00ca7975a4015cfc560002043205057b',
+    psmDebt: '0xa4e223159cdb2f877fe6909e78f91a5951836349f37422709bbacc73827a26a6b8de20b4d5c3fd00ca7975a4015cfc560002043205057bad64c4f4d3794e7acf822a4423a875490002043205011f',
+    psmReserve: '0x682a59d51ab9e48a8c8cc418ff9708d2b99d880ec681799c0cf30e8886371da9a319d0e87221ca1ee751c1529f201522c00700008b9b5df6c904c1891256c5e071b7f42fcba313ddd711741d4f7b7030c946a6f9352577c854a6c5f93285c7b1b67dae77',
   };
   const CEILING = 10_000_000, DOT_DEC = 1e10, USD_DEC = 1e6;
   const CALL = { dot: 2853229.86, usd: 2500000 };       // amounts fixed in the referendum's call
@@ -162,18 +182,25 @@
       const n = parseInt(hdr.number, 16);
       if (n === lastBlock) return;
       lastBlock = n;
-      const [det, rUsd, rRef, ref, now] = await Promise.all([
+      const [det, rUsd, rRef, ref, now, debtHex, resHex, infoHex] = await Promise.all([
         rpc('state_getStorage', [K.asset7873, head]),
         rpc('state_call', ['AssetConversionApi_get_reserves', K.reservesDotUsd, head]),
         rpc('state_call', ['AssetConversionApi_get_reserves', K.reservesUsdt, head]),
         rpc('state_getStorage', [K.ref1944, head]),
         rpc('state_getStorage', [K.now, head]),
+        rpc('state_getStorage', [K.psmDebt, head]),
+        rpc('state_getStorage', [K.psmReserve, head]),
+        rpc('state_getStorage', [K.psmInfo, head]),
       ]);
+      const debt = debtHex ? Number(u128(bytes(debtHex), 0)) / USD_DEC : null;
+      const reserve = resHex ? Number(u128(bytes(resHex), 0)) / USD_DEC : null;
+      const ceiling = infoHex ? Number(u128(bytes(infoHex), 32)) / USD_DEC : null;
       const pool = reserves(rUsd), refPool = reserves(rRef);
       const supply = det ? Number(u128(bytes(det), 128)) / USD_DEC : null;
       const t = now ? new Date(Number(BigInt('0x' + [...bytes(now)].reverse().map(x => x.toString(16).padStart(2, '0')).join('')))) : null;
       const row = { block: n, time: t, supply, dot: pool?.[0] ?? null, usd: pool?.[1] ?? null,
-        price: pool ? pool[1] / pool[0] : null, ref: refPool ? refPool[1] / refPool[0] : null };
+        price: pool ? pool[1] / pool[0] : null, ref: refPool ? refPool[1] / refPool[0] : null,
+        debt, reserve, ceiling, psm: infoHex != null };
       if (!DEMO) { series.push(row); if (series.length > 600) series.shift(); render(row, ref); }
       else renderMeta(row, ref);
       return row;
@@ -201,8 +228,14 @@
 
   function tiles(row) {
     $('supply').textContent = row.supply == null ? 'not created' : fmt(row.supply, 0);
-    $('supplyBar').style.width = row.supply == null ? '0%' : Math.min(100, row.supply / CEILING * 100).toFixed(2) + '%';
-    $('supplyNote').textContent = row.supply == null ? 'ceiling will be 10,000,000' : `${(row.supply / CEILING * 100).toFixed(1)}% of the 10,000,000 ceiling`;
+    const cap = row.ceiling ?? CEILING;
+    $('supplyBar').style.width = row.supply == null ? '0%' : Math.min(100, row.supply / cap * 100).toFixed(2) + '%';
+    $('supplyNote').textContent = row.supply == null ? 'ceiling will be 10,000,000' : `${(row.supply / cap * 100).toFixed(1)}% of the ${fmt(cap, 0)} ceiling`;
+    if (row.psm === false || row.psm == null && row.debt == null) { $('back').textContent = '–'; $('backNote').textContent = 'PSM not created'; }
+    else if (row.debt == null || row.debt === 0) { $('back').textContent = fmt(row.reserve ?? 0, 0) + ' USDT'; $('backNote').textContent = 'nothing minted through the PSM yet'; }
+    else { const r = row.reserve ?? 0, pct = r / row.debt * 100;
+      $('back').textContent = fmt(r, 0) + ' USDT';
+      $('backNote').textContent = `${pct.toFixed(2)}% of the ${fmt(row.debt, 0)} dotUSD minted against it`; }
     $('price').textContent = row.price == null ? '–' : '$' + fmt(row.price, 4);
     $('ref').textContent = row.ref == null ? '–' : '$' + fmt(row.ref, 4);
     if (row.price != null && row.ref != null) {
@@ -215,61 +248,76 @@
 
   // ---- chart -------------------------------------------------------------
   const W = 920, H = 300, M = { l: 52, r: 96, t: 12, b: 30 };
-  const svg = $('chart'), tip = $('tip');
   const el = (name, attrs, text) => { const e = document.createElementNS('http://www.w3.org/2000/svg', name); for (const k in attrs) e.setAttribute(k, attrs[k]); if (text != null) e.textContent = text; return e; };
-  let scale = null;
 
-  function draw() {
-    svg.replaceChildren();
-    const pts = series.filter(d => d.ref != null || d.price != null);
-    if (pts.length < 2) { svg.append(el('text', { x: W / 2, y: H / 2, 'text-anchor': 'middle', fill: 'var(--text-muted)', 'font-size': 13 }, 'Collecting blocks…')); table(); return; }
-    const vals = pts.flatMap(d => [d.price, d.ref]).filter(v => v != null);
-    let lo = Math.min(...vals), hi = Math.max(...vals); const pad = Math.max((hi - lo) * 0.15, hi * 0.002); lo -= pad; hi += pad;
-    const x = (i) => M.l + (pts.length === 1 ? 0 : i / (pts.length - 1)) * (W - M.l - M.r);
-    const y = (v) => M.t + (1 - (v - lo) / (hi - lo)) * (H - M.t - M.b);
-    scale = { pts, x, y };
-    for (let i = 0; i <= 4; i++) {
-      const v = lo + (hi - lo) * i / 4, yy = y(v);
-      svg.append(el('line', { x1: M.l, x2: W - M.r, y1: yy, y2: yy, stroke: 'var(--grid)', 'stroke-width': 1 }));
-      svg.append(el('text', { x: M.l - 8, y: yy + 4, 'text-anchor': 'end', fill: 'var(--text-muted)', 'font-size': 11.5 }, '$' + v.toFixed(3)));
-    }
-    const first = pts[0], last = pts[pts.length - 1];
-    svg.append(el('text', { x: M.l, y: H - 8, fill: 'var(--text-muted)', 'font-size': 11.5 }, 'block ' + first.block.toLocaleString('en-US')));
-    svg.append(el('text', { x: W - M.r, y: H - 8, 'text-anchor': 'end', fill: 'var(--text-muted)', 'font-size': 11.5 }, 'block ' + last.block.toLocaleString('en-US')));
-    const line = (key, color, label) => {
-      const seg = pts.map((d, i) => d[key] == null ? null : [x(i), y(d[key])]).filter(Boolean);
-      if (seg.length < 2) return;
-      svg.append(el('path', { d: 'M' + seg.map(p => p[0].toFixed(1) + ',' + p[1].toFixed(1)).join('L'), fill: 'none', stroke: color, 'stroke-width': 2, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }));
-      const e = seg[seg.length - 1];
-      svg.append(el('circle', { cx: e[0], cy: e[1], r: 4, fill: color, stroke: 'var(--surface-1)', 'stroke-width': 2 }));
-      return { y: e[1], label };
+  function makeChart(svg, wrap, tip, tbl) {
+    let scale = null;
+    const table = (rows) => {
+      tbl.innerHTML = '<tr><th>Block</th><th>dotUSD pool</th><th>USDT pool</th><th>Supply</th><th>Pool DOT</th><th>Pool dotUSD</th></tr>' +
+        rows.map(d => `<tr><td>${d.block.toLocaleString('en-US')}</td><td>${d.price == null ? '–' : '$' + d.price.toFixed(4)}</td><td>${d.ref == null ? '–' : '$' + d.ref.toFixed(4)}</td><td>${d.supply == null ? '–' : fmt(d.supply, 0)}</td><td>${d.dot == null ? '–' : fmt(d.dot, 0)}</td><td>${d.usd == null ? '–' : fmt(d.usd, 0)}</td></tr>`).join('');
     };
-    const ends = [line('ref', 'var(--series-2)', 'USDT pool'), line('price', 'var(--series-1)', 'dotUSD pool')].filter(Boolean);
-    if (ends.length === 2 && Math.abs(ends[0].y - ends[1].y) < 14) { const mid = (ends[0].y + ends[1].y) / 2, up = ends[0].y < ends[1].y; ends[0].y = mid + (up ? -8 : 8); ends[1].y = mid + (up ? 8 : -8); }
-    for (const e of ends) svg.append(el('text', { x: W - M.r + 10, y: e.y + 4, fill: 'var(--text-secondary)', 'font-size': 12 }, e.label));
-    svg.append(el('line', { id: 'cross', x1: 0, x2: 0, y1: M.t, y2: H - M.b, stroke: 'var(--text-muted)', 'stroke-width': 1, 'stroke-dasharray': '3 3', visibility: 'hidden' }));
-    table();
+    const draw = (data, tableRows) => {
+      svg.replaceChildren();
+      const pts = data.filter(d => d.ref != null || d.price != null);
+      table(tableRows ?? data);
+      if (pts.length < 2) { scale = null; svg.append(el('text', { x: W / 2, y: H / 2, 'text-anchor': 'middle', fill: 'var(--text-muted)', 'font-size': 13 }, 'Collecting blocks…')); return; }
+      const vals = pts.flatMap(d => [d.price, d.ref]).filter(v => v != null);
+      let lo = Math.min(...vals), hi = Math.max(...vals); const pad = Math.max((hi - lo) * 0.15, hi * 0.002); lo -= pad; hi += pad;
+      const x = (i) => M.l + i / (pts.length - 1) * (W - M.l - M.r);
+      const y = (v) => M.t + (1 - (v - lo) / (hi - lo)) * (H - M.t - M.b);
+      scale = { pts, x };
+      for (let i = 0; i <= 4; i++) {
+        const v = lo + (hi - lo) * i / 4, yy = y(v);
+        svg.append(el('line', { x1: M.l, x2: W - M.r, y1: yy, y2: yy, stroke: 'var(--grid)', 'stroke-width': 1 }));
+        svg.append(el('text', { x: M.l - 8, y: yy + 4, 'text-anchor': 'end', fill: 'var(--text-muted)', 'font-size': 11.5 }, '$' + v.toFixed(3)));
+      }
+      svg.append(el('text', { x: M.l, y: H - 8, fill: 'var(--text-muted)', 'font-size': 11.5 }, 'block ' + pts[0].block.toLocaleString('en-US')));
+      svg.append(el('text', { x: W - M.r, y: H - 8, 'text-anchor': 'end', fill: 'var(--text-muted)', 'font-size': 11.5 }, 'block ' + pts[pts.length - 1].block.toLocaleString('en-US')));
+      const line = (key, color, label) => {
+        const seg = pts.map((d, i) => d[key] == null ? null : [x(i), y(d[key])]).filter(Boolean);
+        if (seg.length < 2) return;
+        svg.append(el('path', { d: 'M' + seg.map(p => p[0].toFixed(1) + ',' + p[1].toFixed(1)).join('L'), fill: 'none', stroke: color, 'stroke-width': 2, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }));
+        const e = seg[seg.length - 1];
+        svg.append(el('circle', { cx: e[0], cy: e[1], r: 4, fill: color, stroke: 'var(--surface-1)', 'stroke-width': 2 }));
+        return { y: e[1], label };
+      };
+      const ends = [line('ref', 'var(--series-2)', 'USDT pool'), line('price', 'var(--series-1)', 'dotUSD pool')].filter(Boolean);
+      if (ends.length === 2 && Math.abs(ends[0].y - ends[1].y) < 14) { const mid = (ends[0].y + ends[1].y) / 2, up = ends[0].y < ends[1].y; ends[0].y = mid + (up ? -8 : 8); ends[1].y = mid + (up ? 8 : -8); }
+      for (const e of ends) svg.append(el('text', { x: W - M.r + 10, y: e.y + 4, fill: 'var(--text-secondary)', 'font-size': 12 }, e.label));
+      svg.append(el('line', { class: 'cross', x1: 0, x2: 0, y1: M.t, y2: H - M.b, stroke: 'var(--text-muted)', 'stroke-width': 1, 'stroke-dasharray': '3 3', visibility: 'hidden' }));
+    };
+    wrap.addEventListener('pointermove', (ev) => {
+      if (!scale) return;
+      const r = svg.getBoundingClientRect(); const px = (ev.clientX - r.left) / r.width * W;
+      const { pts, x } = scale; let i = Math.round((px - M.l) / (W - M.l - M.r) * (pts.length - 1)); i = Math.max(0, Math.min(pts.length - 1, i));
+      const d = pts[i], cross = svg.querySelector('.cross'); if (!cross) return;
+      cross.setAttribute('x1', x(i)); cross.setAttribute('x2', x(i)); cross.setAttribute('visibility', 'visible');
+      tip.hidden = false;
+      tip.innerHTML = `<b>Block ${d.block.toLocaleString('en-US')}</b><br>` +
+        `<span class="sw" style="background:var(--series-1)"></span>dotUSD pool ${d.price == null ? '–' : '$' + d.price.toFixed(4)}<br>` +
+        `<span class="sw" style="background:var(--series-2)"></span>USDT pool ${d.ref == null ? '–' : '$' + d.ref.toFixed(4)}`;
+      const left = (x(i) / W) * r.width; tip.style.left = Math.min(r.width - tip.offsetWidth - 4, Math.max(4, left + 12)) + 'px'; tip.style.top = '8px';
+    });
+    wrap.addEventListener('pointerleave', () => { tip.hidden = true; const c = svg.querySelector('.cross'); if (c) c.setAttribute('visibility', 'hidden'); });
+    return draw;
   }
+  const drawLive = makeChart($('chart'), $('chartwrap'), $('tip'), $('tbl'));
+  const drawOpening = makeChart($('openChart'), $('openWrap'), $('openTip'), $('openTbl'));
+  const draw = () => drawLive(series, series.slice(-60).reverse());
 
-  function table() {
-    const rows = series.slice(-60).reverse();
-    $('tbl').innerHTML = '<tr><th>Block</th><th>dotUSD pool</th><th>USDT pool</th><th>Supply</th><th>Pool DOT</th><th>Pool dotUSD</th></tr>' +
-      rows.map(d => `<tr><td>${d.block.toLocaleString('en-US')}</td><td>${d.price == null ? '–' : '$' + d.price.toFixed(4)}</td><td>${d.ref == null ? '–' : '$' + d.ref.toFixed(4)}</td><td>${d.supply == null ? '–' : fmt(d.supply, 0)}</td><td>${d.dot == null ? '–' : fmt(d.dot, 0)}</td><td>${d.usd == null ? '–' : fmt(d.usd, 0)}</td></tr>`).join('');
+  // ---- the recorded opening, if a data file has been published next to this page ----
+  async function loadOpening() {
+    try {
+      const r = await fetch('opening.json', { cache: 'no-store' }); if (!r.ok) return;
+      const rows = (await r.json()).map(d => ({ block: d.block, supply: d.supply, dot: d.dot, usd: d.asset ?? d.usd, price: d.price, ref: d.refPrice ?? d.ref }));
+      if (rows.length < 2) return;
+      $('openingCard').hidden = false; drawOpening(rows);
+      const first = rows.find(d => d.price != null), last = rows[rows.length - 1];
+      if (first) $('openNote').textContent = `Pool created at block ${first.block.toLocaleString('en-US')} at $${first.price.toFixed(4)} per DOT, against $${(first.ref ?? 0).toFixed(4)} in the USDT pool. ` +
+        `By block ${last.block.toLocaleString('en-US')} it stood at $${(last.price ?? 0).toFixed(4)}.`;
+    } catch { /* no recorded opening yet */ }
   }
-
-  $('chartwrap').addEventListener('pointermove', (ev) => {
-    if (!scale) return;
-    const r = svg.getBoundingClientRect(); const px = (ev.clientX - r.left) / r.width * W;
-    const { pts, x } = scale; let i = Math.round((px - M.l) / (W - M.l - M.r) * (pts.length - 1)); i = Math.max(0, Math.min(pts.length - 1, i));
-    const d = pts[i], cross = document.getElementById('cross'); if (!cross) return;
-    cross.setAttribute('x1', x(i)); cross.setAttribute('x2', x(i)); cross.setAttribute('visibility', 'visible');
-    tip.hidden = false;
-    tip.innerHTML = `<b>Block ${d.block.toLocaleString('en-US')}</b><br>` +
-      `<span class="sw" style="background:var(--series-1)"></span>dotUSD pool ${d.price == null ? '–' : '$' + d.price.toFixed(4)}<br>` +
-      `<span class="sw" style="background:var(--series-2)"></span>USDT pool ${d.ref == null ? '–' : '$' + d.ref.toFixed(4)}`;
-    const left = (x(i) / W) * r.width; tip.style.left = Math.min(r.width - tip.offsetWidth - 4, Math.max(4, left + 12)) + 'px'; tip.style.top = '8px';
-  });
-  $('chartwrap').addEventListener('pointerleave', () => { tip.hidden = true; const c = document.getElementById('cross'); if (c) c.setAttribute('visibility', 'hidden'); });
+  loadOpening();
 
   // ---- simulation (only with ?demo) -------------------------------------
   async function demo() {
@@ -280,7 +328,7 @@
     for (let b = -6; b < 0; b++) series.push({ block: base + b, supply: null, dot: null, usd: null, price: null, ref: market });
     const steps = 22;
     for (let s = 0; s <= steps; s++) {
-      series.push({ block: base + s, supply, dot: x, usd: y, price: y / x, ref: market });
+      series.push({ block: base + s, supply, dot: x, usd: y, price: y / x, ref: market, debt: supply, reserve: supply, ceiling: CEILING, psm: true });
       const target = Math.sqrt(k() * market), want = target - y;            // dotUSD needed to reach market
       const dy = want * (s < 3 ? 0.45 : 0.3); if (dy < 1) continue;        // traders close a share of the gap each block
       const out = x * (dy * 0.997) / (y + dy * 0.997); y += dy; x -= out; supply += dy;
